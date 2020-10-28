@@ -1388,7 +1388,7 @@ public class ExpressionAnalyzer
             // verify all expressions can be coerced to the superType
             for (Expression expression : expressions) {
                 Type type = process(expression, context);
-                if (!expectedType.getJavaType().isAssignableFrom(type.getJavaType())) {
+                if (!Objects.equals(expectedType.getTypeSignature().getBase(), type.getTypeSignature().getBase())) {
                     addOrReplaceExpressionCoercion(expression, type, expectedType);
                 }
             }
