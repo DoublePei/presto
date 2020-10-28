@@ -28,6 +28,7 @@ import java.util.List;
 import static io.prestosql.spi.type.StandardTypes.ARRAY;
 import static io.prestosql.spi.type.TypeUtils.checkElementNotNull;
 import static io.prestosql.spi.type.TypeUtils.hashPosition;
+import static io.prestosql.spi.type.VarcharType.VARCHAR;
 import static java.util.Collections.singletonList;
 import static java.util.Objects.requireNonNull;
 
@@ -36,6 +37,7 @@ public class ArrayType
 {
     private final Type elementType;
     public static final String ARRAY_NULL_ELEMENT_MSG = "ARRAY comparison not supported for arrays with null elements";
+    public static final ArrayType VARCHAR_ARRAY = new ArrayType(VARCHAR);
 
     public ArrayType(Type elementType)
     {

@@ -73,6 +73,7 @@ import static io.prestosql.spi.type.TimestampType.TIMESTAMP;
 import static io.prestosql.spi.type.TimestampWithTimeZoneType.TIMESTAMP_WITH_TIME_ZONE;
 import static io.prestosql.spi.type.TinyintType.TINYINT;
 import static io.prestosql.spi.type.VarbinaryType.VARBINARY;
+import static io.prestosql.spi.type.VarcharType.VARCHAR;
 import static io.prestosql.spi.type.VarcharType.createUnboundedVarcharType;
 import static io.prestosql.spi.type.VarcharType.createVarcharType;
 import static io.prestosql.type.ArrayParametricType.ARRAY;
@@ -128,6 +129,7 @@ public final class TypeRegistry
         addType(TINYINT);
         addType(DOUBLE);
         addType(REAL);
+        addType("string", VARCHAR);
         addType(VARBINARY);
         addType(DATE);
         addType(TIME);
@@ -417,6 +419,15 @@ public final class TypeRegistry
         requireNonNull(type, "type is null");
         Type existingType = types.putIfAbsent(type.getTypeSignature(), type);
         checkState(existingType == null || existingType.equals(type), "Type %s is already registered", type);
+    }
+
+    public void addType(String alias, Type type)
+    {
+        requireNonNull(alias, "alias is null");
+        requireNonNull(type, "type is null");
+
+        Type existingType = types.putIfAbsent(new TypeSignature(alias), type);
+        checkState(existingType == null || existingType.equals(type), "Alias %s is already mapped to %s", alias, type);
     }
 
     public void addParametricType(ParametricType parametricType)

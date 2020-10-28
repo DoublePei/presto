@@ -27,11 +27,13 @@ import io.prestosql.metadata.Metadata;
 import io.prestosql.metadata.OperatorNotFoundException;
 import io.prestosql.metadata.QualifiedObjectName;
 import io.prestosql.metadata.Signature;
+import io.prestosql.operator.scalar.ConcatWsFunction;
 import io.prestosql.security.AccessControl;
 import io.prestosql.security.DenyAllAccessControl;
 import io.prestosql.spi.PrestoException;
 import io.prestosql.spi.StandardErrorCode;
 import io.prestosql.spi.function.OperatorType;
+import io.prestosql.spi.type.ArrayType;
 import io.prestosql.spi.type.CharType;
 import io.prestosql.spi.type.DecimalParseResult;
 import io.prestosql.spi.type.Decimals;
@@ -124,6 +126,7 @@ import static com.google.common.base.Verify.verify;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.Iterables.getOnlyElement;
 import static io.prestosql.spi.function.OperatorType.SUBSCRIPT;
+import static io.prestosql.spi.type.ArrayType.VARCHAR_ARRAY;
 import static io.prestosql.spi.type.BigintType.BIGINT;
 import static io.prestosql.spi.type.BooleanType.BOOLEAN;
 import static io.prestosql.spi.type.DateType.DATE;
@@ -542,7 +545,7 @@ public class ExpressionAnalyzer
                 type = coerceToSingleType(context, "All CASE results must be the same type: %s", expressions);
             }
             catch (Exception e) {
-                type = coerceToVarcharType(context, expressions);
+                type = coerceToSingleType(context, expressions, VARCHAR);
             }
             setExpressionType(node, type);
 
@@ -621,11 +624,7 @@ public class ExpressionAnalyzer
         @Override
         protected Type visitLikePredicate(LikePredicate node, StackableAstVisitorContext<Context> context)
         {
-            Type valueType = process(node.getValue(), context);
-            if (!(valueType instanceof CharType) && !(valueType instanceof VarcharType)) {
-                addOrReplaceExpressionCoercion(node.getValue(), valueType, VarcharType.createUnboundedVarcharType());
-//                coerceType(context, node.getValue(), VARCHAR, "Left side of LIKE expression");
-            }
+            coerceToSingleType(context, ImmutableList.of(node.getValue()), VARCHAR);
 
             Type patternType = getVarcharType(node.getPattern(), context);
             coerceType(context, node.getPattern(), patternType, "Pattern for LIKE expression");
@@ -868,8 +867,31 @@ public class ExpressionAnalyzer
 
             // support implicit type conversion for concat function
             if (node.getName().toString().equals("concat") && isPrimitiveType(argumentTypes)) {
-                coerceToVarcharType(context, node.getArguments());
+                coerceToSingleType(context, node.getArguments(), VARCHAR);
                 argumentTypes = TypeSignatureProvider.fromTypes(Collections.nCopies(node.getArguments().size(), VARCHAR));
+            }
+
+            // support implicit type conversion for concat_ws function
+            if (node.getName().toString().equals("concat_ws")) {
+                argumentTypes.forEach(arg -> {
+                    String baseName = arg.getTypeSignature().getBase();
+                    if (Objects.equals(StandardTypes.ARRAY, baseName)) {
+                        Type elementType = ((ArrayType) typeManager.getType(arg.getTypeSignature())).getElementType();
+                        baseName += "(" + elementType.getTypeSignature().getBase() + ")";
+                    }
+
+                    if (!ConcatWsFunction.supportedTypes.contains(baseName)) {
+                        String message = String.format("Function concat_ws must be 'string or array<string>', but '%s' was found", baseName);
+                        throw new SemanticException(SemanticErrorCode.AMBIGUOUS_FUNCTION_CALL, node, message);
+                    }
+                });
+
+                int num = node.getArguments().size();
+                coerceToSingleType(context, node.getArguments().subList(1, num), VARCHAR_ARRAY);
+
+                ImmutableList.Builder<Type> typeBuilder = ImmutableList.builder();
+                typeBuilder.add(VARCHAR).addAll(Collections.nCopies(num - 1, VARCHAR_ARRAY));
+                argumentTypes = TypeSignatureProvider.fromTypes(typeBuilder.build());
             }
 
             Signature function = resolveFunction(node, argumentTypes, functionRegistry);
@@ -1037,7 +1059,7 @@ public class ExpressionAnalyzer
                     coerceToSingleType(context, "IN value and list items must be the same type: %s", expressions);
                 }
                 catch (Exception e) {
-                    coerceToVarcharType(context, expressions);
+                    coerceToSingleType(context, expressions, VARCHAR);
                 }
             }
             else if (valueList instanceof SubqueryExpression) {
@@ -1045,7 +1067,7 @@ public class ExpressionAnalyzer
                     coerceToSingleType(context, node, "value and result of subquery must be of the same type for IN expression: %s vs %s", value, valueList);
                 }
                 catch (Exception e) {
-                    coerceToVarcharType(context, ImmutableList.<Expression>builder().add(value, valueList).build());
+                    coerceToSingleType(context, ImmutableList.<Expression>builder().add(value, valueList).build(), VARCHAR);
                 }
             }
 
@@ -1361,20 +1383,17 @@ public class ExpressionAnalyzer
             return superType;
         }
 
-        private Type coerceToVarcharType(StackableAstVisitorContext<Context> context, List<Expression> expressions)
+        private Type coerceToSingleType(StackableAstVisitorContext<Context> context, List<Expression> expressions, Type expectedType)
         {
-            // determine super type
-            Type superType = VarcharType.createUnboundedVarcharType();
-
             // verify all expressions can be coerced to the superType
             for (Expression expression : expressions) {
                 Type type = process(expression, context);
-                if (!type.getTypeSignature().getBase().equals(StandardTypes.VARCHAR)) {
-                    addOrReplaceExpressionCoercion(expression, type, superType);
+                if (!expectedType.getJavaType().isAssignableFrom(type.getJavaType())) {
+                    addOrReplaceExpressionCoercion(expression, type, expectedType);
                 }
             }
 
-            return superType;
+            return expectedType;
         }
 
         private void addOrReplaceExpressionCoercion(Expression expression, Type type, Type superType)

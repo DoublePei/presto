@@ -16,6 +16,7 @@ package io.prestosql.sql.parser;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import io.prestosql.sql.tree.AddColumn;
 import io.prestosql.sql.tree.AliasedRelation;
@@ -1571,6 +1572,11 @@ class AstBuilder
                     arguments.get(numValues));
         }
 
+        List<Expression> args = visit(context.expression(), Expression.class);
+        if (name.toString().equalsIgnoreCase("concat_ws") && args.get(0) instanceof StringLiteral) {
+            Iterables.removeIf(args, input -> input instanceof NullLiteral);
+        }
+
         return new FunctionCall(
                 getLocation(context),
                 getQualifiedName(context.qualifiedName()),
@@ -1578,7 +1584,7 @@ class AstBuilder
                 filter,
                 orderBy,
                 distinct,
-                visit(context.expression(), Expression.class));
+                args);
     }
 
     @Override
